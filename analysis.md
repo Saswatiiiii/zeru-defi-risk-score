@@ -1,109 +1,82 @@
-# 📊 Analysis: DeFi Wallet Risk Scoring (Compound V2)
+# 📊 Analysis: Wallet Risk Scoring – Zeru Round 2
 
-This document explains the approach used to collect data, engineer features, and compute risk scores for 100 wallets interacting with the Compound V2 protocol.
+## 🔍 Data Collection Method
 
----
+We collected on-chain transaction data for 100 wallet addresses using the **Covalent API**, which provides detailed decoded transactions across various protocols including **Compound V2**. The following steps were followed:
 
-## 1. 📟 Data Collection
+- Queried the `/v1/{chain_id}/address/{wallet_address}/transactions_v3/` endpoint.
+- Filtered and retained only Compound-related transactions.
+- Stored responses in the `data/raw/` directory in JSON format.
+- Added retry handling and sleep intervals to avoid rate limits and ensure reliability.
 
-* **API Used**: [Covalent API](https://www.covalenthq.com/docs/)
-* **Protocol**: Compound V2
-* **Wallet Source**: Provided list of 100 wallet addresses
-* **Script**: `fetch_transactions.py`
+## 🧹 Data Preprocessing & Flattening
 
-We queried each wallet’s transaction history related to Compound V2 using Covalent's `protocol_v2` endpoints and saved results as JSON in `data/raw_transactions/`.
+Each raw transaction JSON file was parsed and flattened into a structured tabular format with the following attributes:
 
----
+- `wallet_address`
+- `txn_type` (e.g., supply, borrow, repay, liquidate, redeem)
+- `token_symbol`
+- `token_amount`
+- `usd_value`
+- `timestamp`
 
-## 2. 🗹 Data Flattening
+We aggregated this transactional data per wallet to compute behavioral and financial activity summaries.
 
-* **Script**: `flatten_transactions.py`
-* Raw JSON responses were parsed to extract:
+## 🛠 Feature Engineering
 
-  * Transaction hash
-  * Wallet address
-  * Token involved
-  * Transaction value
-  * Method/event name (e.g., deposit, borrow, repay)
-  * Timestamp
+For each wallet, we engineered the following features:
 
-Corrupted or null-decoded transactions were skipped safely.
+| Feature               | Description                                       |
+|-----------------------|---------------------------------------------------|
+| `num_transactions`    | Total number of Compound protocol interactions    |
+| `total_supply_usd`    | Total USD value of all supplied assets            |
+| `total_borrow_usd`    | Total USD value borrowed                          |
+| `borrow_to_supply_ratio` | Risk metric: borrow/supply ratio               |
+| `num_liquidations`    | Count of times wallet was liquidated              |
+| `avg_txn_value`       | Average USD value per transaction                 |
+| `unique_tokens`       | Number of distinct tokens used                    |
+| `activity_days`       | Days active with transactions                     |
+| `last_active_days_ago`| Days since last activity                          |
+| `has_borrowed`        | Binary indicator (1 if borrowed, else 0)          |
+| `has_supplied`        | Binary indicator (1 if supplied, else 0)          |
 
----
+All features were scaled using **MinMaxScaler** to bring them to a uniform [0, 1] range before scoring.
 
-## 3. 🧮 Feature Engineering
 
-* **Script**: `feature_engineering.py`
-* The following features were engineered per wallet:
+## 🧮 Scoring Approach
 
-| Feature              | Description                             |
-| -------------------- | --------------------------------------- |
-| `num_transactions`   | Number of Compound V2 transactions      |
-| `total_value_usd`    | Sum of all tx amounts in USD            |
-| `num_unique_tokens`  | Number of unique tokens interacted with |
-| `active_days`        | Days between first and last tx          |
-| `num_borrow_events`  | Total borrow actions                    |
-| `num_supply_events`  | Total supply/deposit actions            |
-| `repay_borrow_ratio` | Ratio of repay to borrow actions        |
+Weights were heuristically chosen to emphasize:
 
-The features were normalized for scoring.
+- **Negative risk indicators** (e.g., high borrow-to-supply ratio, liquidations)
+- **Positive indicators** (e.g., consistent activity, low default behavior)
 
----
+Wallets with more supply than borrow and no liquidations ranked higher.  
+Riskier wallets with frequent borrowing and liquidations received lower scores.
 
-## 4. 📈 Risk Scoring
-
-* **Script**: `scoring.py`
-* Wallets were scored based on:
-
-  * High number of transactions (more active = safer)
-  * Higher diversity of tokens (indicates diversification)
-  * Balanced borrow and repay behavior (healthy repayment)
-  * Lower borrow dominance and high repay ratio
-  * Significant value transferred (indicates trust)
-
-Each feature was min-max scaled and aggregated with weights:
-
-```python
-score = (
-    0.2 * norm(num_transactions) +
-    0.2 * norm(total_value_usd) +
-    0.15 * norm(num_unique_tokens) +
-    0.15 * norm(active_days) +
-    0.15 * norm(repay_borrow_ratio) +
-    0.15 * norm(num_supply_events)
-)
-```
-
-Then scaled to 0–1000.
+Finally, the weighted risk score was scaled to the range **0 to 1000** using `MinMaxScaler`.
 
 ---
 
-## 5. ✅ Final Output
+## ✅ Justification of Risk Indicators
 
-* File: `wallet_scores.csv`
-* Format:
-
-  ```csv
-  wallet_address,score
-  0xfaa07...,732
-  ...
-  ```
-* Wallets with limited or no activity were scored lower (riskier).
+- **Borrow/Supply ratio > 1** indicates over-leveraged behavior.
+- **Liquidations** are clear markers of poor financial management or risk.
+- **Low activity** or **abandonment** may indicate dormant or hacked wallets.
+- **Frequent, diversified interactions** and **supplying assets** are signs of healthier behavior.
 
 ---
 
-## 6. 📌 Limitations
+## 📁 Output
 
-* The scoring model is static and doesn’t account for protocol-level risks or market volatility.
-* Value calculations assume the token prices fetched by Covalent are accurate.
-* On-chain liquidation or health factor data was not directly used.
+The final file `output/scores.csv` contains:
 
----
+| wallet_address | score |
+|----------------|-------|
+| 0xabc...123    | 732   |
+| 0xdef...456    | 198   |
 
-## 7. 🔄 Improvements Possible
-
-* Use real-time token prices for value normalization.
-* Incorporate Compound V2-specific risk metrics like collateral ratio or liquidation risk.
-* Include historical lending/borrowing rate volatility per token.
+All 100 wallets are included, even if they had no transaction data (they received a score of 0).
 
 ---
+
+**Note:** Raw transaction `.json` files were used temporarily during development and have been excluded from GitHub due to file size limits. However, processed `.csv` outputs and core logic are available.
